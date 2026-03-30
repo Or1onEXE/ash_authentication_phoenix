@@ -218,7 +218,7 @@ defmodule AshAuthentication.Phoenix.Components.Totp.Verify2faForm do
           {:noreply, Socket.t()}
 
   def handle_event("change", params, socket) do
-    params = get_params(params, socket.assigns.strategy)
+    params = validation_params(params, socket.assigns)
 
     form =
       socket.assigns.form
@@ -228,14 +228,7 @@ defmodule AshAuthentication.Phoenix.Components.Totp.Verify2faForm do
   end
 
   def handle_event("submit", params, socket) do
-    params = get_params(params, socket.assigns.strategy)
-
-    params =
-      case socket.assigns.mode do
-        :token -> Map.put(params, "token", socket.assigns.token)
-        :step_up -> params
-        _ -> params
-      end
+    params = validation_params(params, socket.assigns)
 
     form = Form.validate(socket.assigns.form, params)
 
@@ -245,6 +238,22 @@ defmodule AshAuthentication.Phoenix.Components.Totp.Verify2faForm do
       |> assign(:trigger_action, form.valid?)
 
     {:noreply, socket}
+  end
+
+  defp validation_params(params, %{mode: :step_up, strategy: strategy, current_user: current_user}) do
+    params
+    |> get_params(strategy)
+    |> Map.put("user", current_user)
+  end
+
+  defp validation_params(params, %{mode: :token, strategy: strategy, token: token}) do
+    params
+    |> get_params(strategy)
+    |> Map.put("token", token)
+  end
+
+  defp validation_params(params, %{strategy: strategy}) do
+    get_params(params, strategy)
   end
 
   defp get_params(params, strategy) do

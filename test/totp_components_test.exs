@@ -6,6 +6,8 @@ defmodule AshAuthentication.Phoenix.TotpComponentsTest do
   @moduledoc false
 
   use ExUnit.Case, async: false
+  alias AshAuthentication.Phoenix.Components.Totp.Verify2faForm
+  alias AshAuthentication.Phoenix.TotpHelpers
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
@@ -92,5 +94,79 @@ defmodule AshAuthentication.Phoenix.TotpComponentsTest do
 
       refute html =~ "Need to set up authenticator?"
     end
+  end
+
+  describe "TOTP verify form" do
+    test "step-up submission includes current_user during validation", %{conn: _conn} do
+      user = create_user()
+      user_with_totp = setup_totp_for_user(user)
+      code = NimbleTOTP.verification_code(user_with_totp.totp_secret)
+      strategy = get_totp_strategy()
+
+      {:ok, socket} =
+        Verify2faForm.update(
+          %{
+            auth_routes_prefix: "/auth",
+            current_user: user_with_totp,
+            id: "totp_verify",
+            mode: :step_up,
+            resource: Example.Accounts.User,
+            strategy: strategy
+          },
+          %Phoenix.LiveView.Socket{}
+        )
+
+      {:noreply, socket} =
+        Verify2faForm.handle_event(
+          "submit",
+          %{"user" => %{"code" => code}},
+          socket
+        )
+
+      assert socket.assigns.trigger_action
+      assert socket.assigns.form.valid?
+    end
+  end
+
+  defp create_user do
+    Example.Accounts.User
+    |> Ash.Changeset.for_create(:register_with_password, %{
+      email: "totp-components-#{System.unique_integer()}@example.com",
+      password: "password123!",
+      password_confirmation: "password123!"
+    })
+    |> Ash.create!()
+  end
+
+  defp setup_totp_for_user(user) do
+    {:ok, user_with_setup} =
+      AshAuthentication.Strategy.action(
+        get_totp_strategy(),
+        :setup,
+        %{user: user},
+        []
+      )
+
+    setup_token = Ash.Resource.get_metadata(user_with_setup, :setup_token)
+    totp_url = Ash.Resource.get_metadata(user_with_setup, :totp_url)
+    %URI{query: query} = URI.parse(totp_url)
+    %{"secret" => encoded_secret} = URI.decode_query(query)
+    secret = Base.decode32!(encoded_secret, padding: false)
+    code = NimbleTOTP.verification_code(secret)
+
+    {:ok, confirmed_user} =
+      AshAuthentication.Strategy.action(
+        get_totp_strategy(),
+        :confirm_setup,
+        %{user: user_with_setup, setup_token: setup_token, code: code},
+        []
+      )
+
+    confirmed_user
+  end
+
+  defp get_totp_strategy do
+    {:ok, strategy} = TotpHelpers.get_totp_strategy(Example.Accounts.User)
+    strategy
   end
 end
